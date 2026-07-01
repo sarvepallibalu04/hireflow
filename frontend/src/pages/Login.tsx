@@ -27,7 +27,9 @@ export const Login: React.FC = () => {
 
       const result = await authService.login({ email, password })
       console.log('Login successful:', result)
+      localStorage.setItem('userName', result.user.first_name)
       alert(`Welcome back, ${result.user.first_name}!`)
+      window.location.href = '/dashboard'
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
     } finally {

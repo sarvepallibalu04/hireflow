@@ -57,7 +57,9 @@ export const Signup: React.FC = () => {
         password: formData.password,
       })
       console.log('Signup successful:', result)
+      localStorage.setItem('userName', formData.firstName)
       alert(`Welcome, ${result.user.first_name}! Account created!`)
+      window.location.href = '/dashboard'
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Signup failed')
     } finally {
