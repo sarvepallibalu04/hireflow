@@ -1,25 +1,38 @@
 import React, { useState } from 'react'
+import { authService } from '../services/api'
 
 export const Login: React.FC = () => {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
-    if (!email || !password) {
-      setError('Please fill in all fields')
-      return
-    }
-    
-    if (!email.includes('@')) {
-      setError('Please enter a valid email')
-      return
-    }
-
-    console.log('Login attempt:', { email, password })
     setError('')
+    setLoading(true)
+
+    try {
+      if (!email || !password) {
+        setError('Please fill in all fields')
+        setLoading(false)
+        return
+      }
+
+      if (!email.includes('@')) {
+        setError('Please enter a valid email')
+        setLoading(false)
+        return
+      }
+
+      const result = await authService.login({ email, password })
+      console.log('Login successful:', result)
+      alert(`Welcome back, ${result.user.first_name}!`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -50,6 +63,7 @@ export const Login: React.FC = () => {
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-600"
                 placeholder="you@example.com"
+                disabled={loading}
               />
             </div>
 
@@ -63,14 +77,16 @@ export const Login: React.FC = () => {
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-600"
                 placeholder="••••••••"
+                disabled={loading}
               />
             </div>
 
             <button
               type="submit"
-              className="w-full bg-primary-600 text-white font-bold py-2 rounded-lg hover:bg-primary-700 transition"
+              disabled={loading}
+              className="w-full bg-primary-600 text-white font-bold py-2 rounded-lg hover:bg-primary-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Sign In
+              {loading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
 
