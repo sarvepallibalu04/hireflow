@@ -6,6 +6,7 @@ from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta
 from typing import Optional
+from app.services.resume_analyzer import analyze_resume, get_ats_score_only, enhance_for_ats
 
 # Load environment variables
 load_dotenv()
@@ -145,6 +146,50 @@ async def get_current_user(token: str = None):
         raise HTTPException(status_code=401, detail="Not authenticated")
     
     return {"message": "User profile (coming soon)"}
+
+@app.post("/api/v1/resume/analyze")
+async def analyze_resume_endpoint(resume_text: str, job_description: str):
+    """Analyze resume against job description"""
+    
+    if not resume_text or not job_description:
+        raise HTTPException(status_code=400, detail="Resume and job description required")
+    
+    try:
+        result = analyze_resume(resume_text, job_description)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/resume/enhance-more")
+async def enhance_more_endpoint(enhanced_resume: str, job_description: str):
+    """Re-enhance an already enhanced resume to push ATS score even higher"""
+    
+    if not enhanced_resume or not job_description:
+        raise HTTPException(status_code=400, detail="Enhanced resume and job description required")
+    
+    try:
+        # Analyze the enhanced resume to find remaining gaps
+        analysis = get_ats_score_only(enhanced_resume, job_description)
+        
+        # Enhance AGAIN with new gaps found
+        more_enhanced = enhance_for_ats(enhanced_resume, job_description, analysis)
+        
+        # Score the newly enhanced resume
+        new_analysis = get_ats_score_only(more_enhanced, job_description)
+        
+        return {
+            "previous_ats_score": analysis.get("ats_score", 0),
+            "new_ats_score": new_analysis.get("ats_score", 0),
+            "improvement": new_analysis.get("ats_score", 0) - analysis.get("ats_score", 0),
+            "more_enhanced_resume": more_enhanced,
+            "missing_keywords": new_analysis.get("missing_keywords", []),
+            "strengths": new_analysis.get("strengths", []),
+            "areas_to_improve": new_analysis.get("areas_to_improve", [])
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn
