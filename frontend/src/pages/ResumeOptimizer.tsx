@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { FileText, Download, Zap, AlertCircle, CheckCircle } from 'lucide-react';
+import { Document, Packer, Paragraph, TextRun } from 'docx';
 
 interface AnalysisResult {
   original_ats_score: number;
@@ -26,6 +27,7 @@ interface EnhanceMoreResult {
 
 const ResumeOptimizer: React.FC = () => {
   const [resumeInput, setResumeInput] = useState('');
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [jobDescription, setJobDescription] = useState('');
   const [activeTab, setActiveTab] = useState('upload');
   const [loading, setLoading] = useState(false);
@@ -35,20 +37,19 @@ const ResumeOptimizer: React.FC = () => {
   const [enhanceResult, setEnhanceResult] = useState<EnhanceMoreResult | null>(null);
   const [displayedResume, setDisplayedResume] = useState('enhanced');
   const [enhanceCount, setEnhanceCount] = useState(0);
+  const [customPrompt, setCustomPrompt] = useState('');
+  const [customEnhanceLoading, setCustomEnhanceLoading] = useState(false);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setResumeInput(event.target?.result as string);
-      };
-      reader.readAsText(file);
+      setResumeFile(file);
+      setResumeInput(`${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
     }
   };
 
   const handleAnalyze = async () => {
-    if (!resumeInput.trim() || !jobDescription.trim()) {
+    if ((!resumeInput.trim() && !resumeFile) || !jobDescription.trim()) {
       setError('Please provide both resume and job description');
       return;
     }
@@ -58,17 +59,23 @@ const ResumeOptimizer: React.FC = () => {
     setEnhanceCount(0);
 
     try {
-        const params = new URLSearchParams({
-            resume_text: resumeInput,
-            job_description: jobDescription,
-        });
+      const formData = new FormData();
+      
+      if (resumeFile) {
+        formData.append('resume_file', resumeFile);
+      } else {
+        formData.append('resume_text', resumeInput);
+      }
+      
+      formData.append('job_description', jobDescription);
 
-        const response = await fetch(
-            `http://localhost:8000/api/v1/resume/analyze?${params}`,
-            {
-             method: 'POST',
-            }
-        );
+      const response = await fetch(
+        'http://localhost:8000/api/v1/resume/analyze',
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
 
       if (!response.ok) {
         throw new Error('Failed to analyze resume');
@@ -94,17 +101,17 @@ const ResumeOptimizer: React.FC = () => {
     try {
       const resumeToEnhance = enhanceResult?.more_enhanced_resume || analysisResult?.enhanced_resume || '';
 
-     const params = new URLSearchParams({
-         enhanced_resume: resumeToEnhance,
-         job_description: jobDescription,
-        });
+      const formData = new FormData();
+      formData.append('enhanced_resume', resumeToEnhance);
+      formData.append('job_description', jobDescription);
 
-     const response = await fetch(
-        `http://localhost:8000/api/v1/resume/enhance-more?${params}`,
+      const response = await fetch(
+        'http://localhost:8000/api/v1/resume/enhance-more',
         {
-            method: 'POST',
+          method: 'POST',
+          body: formData,
         }
-        );
+      );
 
       if (!response.ok) {
         throw new Error('Failed to enhance resume further');
@@ -121,28 +128,100 @@ const ResumeOptimizer: React.FC = () => {
     }
   };
 
-  const downloadResume = () => {
+  const handleCustomEnhance = async () => {
+    if (!customPrompt.trim()) {
+      setError('Please enter custom enhancement requirements');
+      return;
+    }
+
+    setCustomEnhanceLoading(true);
+    setError('');
+
+    try {
+      const formData = new FormData();
+      formData.append('resume_text', resumeInput);
+      formData.append('job_description', jobDescription);
+      formData.append('custom_prompt', customPrompt);
+
+      const response = await fetch(
+        'http://localhost:8000/api/v1/resume/enhance-custom',
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to apply custom enhancement');
+      }
+
+      const data = await response.json();
+      setEnhanceResult(data);
+      setDisplayedResume('more-enhanced');
+      setEnhanceCount(enhanceCount + 1);
+      setCustomPrompt('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setCustomEnhanceLoading(false);
+    }
+  };
+
+  const downloadResume = async (format: 'txt' | 'docx' = 'txt') => {
     let content = '';
-    let filename = 'resume.txt';
+    let filename = 'resume';
 
     if (displayedResume === 'enhanced' && analysisResult) {
       content = analysisResult.enhanced_resume;
-      filename = `enhanced-resume-${analysisResult.enhanced_ats_score}.txt`;
+      filename = `enhanced-resume-${analysisResult.enhanced_ats_score}`;
     } else if (displayedResume === 'more-enhanced' && enhanceResult) {
       content = enhanceResult.more_enhanced_resume;
-      filename = `enhanced-resume-${enhanceResult.new_ats_score}.txt`;
+      filename = `enhanced-resume-${enhanceResult.new_ats_score}`;
     } else if (analysisResult) {
       content = analysisResult.tailored_resume;
-      filename = 'tailored-resume.txt';
+      filename = 'tailored-resume';
     }
 
-    const element = document.createElement('a');
-    element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(content));
-    element.setAttribute('download', filename);
-    element.style.display = 'none';
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
+    if (format === 'docx') {
+      try {
+        const paragraphs = content.split('\n').map(
+          (line) => new Paragraph({
+            text: line || ' ',
+            spacing: { line: 240, lineRule: 'auto' },
+          })
+        );
+
+        const doc = new Document({
+          sections: [
+            {
+              properties: {},
+              children: paragraphs,
+            },
+          ],
+        });
+
+        const blob = await Packer.toBlob(doc);
+        const url = window.URL.createObjectURL(blob);
+        const element = document.createElement('a');
+        element.setAttribute('href', url);
+        element.setAttribute('download', `${filename}.docx`);
+        element.style.display = 'none';
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
+        window.URL.revokeObjectURL(url);
+      } catch (err) {
+        setError('Failed to generate DOCX file');
+      }
+    } else {
+      const element = document.createElement('a');
+      element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(content));
+      element.setAttribute('download', `${filename}.txt`);
+      element.style.display = 'none';
+      document.body.appendChild(element);
+      element.click();
+      document.body.removeChild(element);
+    }
   };
 
   const currentScore = enhanceResult?.new_ats_score || analysisResult?.enhanced_ats_score || 0;
@@ -193,7 +272,7 @@ const ResumeOptimizer: React.FC = () => {
                 <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center cursor-pointer hover:border-sky-600 transition">
                   <input
                     type="file"
-                    accept=".txt,.pdf"
+                    accept=".txt,.pdf,.docx"
                     onChange={handleFileUpload}
                     className="hidden"
                     id="resume-file"
@@ -204,14 +283,17 @@ const ResumeOptimizer: React.FC = () => {
                       <p className="font-medium text-slate-700">
                         Click to upload or drag and drop
                       </p>
-                      <p className="text-sm text-slate-500">TXT or PDF file</p>
+                      <p className="text-sm text-slate-500">TXT, PDF or DOCX file</p>
                     </div>
                   </label>
                 </div>
               ) : (
                 <textarea
                   value={resumeInput}
-                  onChange={(e) => setResumeInput(e.target.value)}
+                  onChange={(e) => {
+                    setResumeInput(e.target.value);
+                    setResumeFile(null);
+                  }}
                   placeholder="Paste your resume here..."
                   className="w-full h-40 p-4 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-600"
                 />
@@ -248,7 +330,7 @@ const ResumeOptimizer: React.FC = () => {
 
             <button
               onClick={handleAnalyze}
-              disabled={loading || !resumeInput.trim() || !jobDescription.trim()}
+              disabled={loading || (!resumeInput.trim() && !resumeFile) || !jobDescription.trim()}
               className="w-full bg-sky-600 hover:bg-sky-700 disabled:bg-slate-400 text-white font-bold py-3 rounded-lg transition flex items-center justify-center gap-2"
             >
               <Zap className="w-5 h-5" />
@@ -388,18 +470,28 @@ const ResumeOptimizer: React.FC = () => {
                     </pre>
                   </div>
 
-                  <div className="flex gap-3 mt-4">
+                  <div className="flex gap-2 mt-4">
                     <button
-                      onClick={downloadResume}
+                      onClick={() => downloadResume('txt')}
                       className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg transition flex items-center justify-center gap-2"
                     >
                       <Download className="w-5 h-5" />
-                      Download
+                      Download TXT
                     </button>
+                    <button
+                      onClick={() => downloadResume('docx')}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg transition flex items-center justify-center gap-2"
+                    >
+                      <Download className="w-5 h-5" />
+                      Download DOCX
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2 mt-2">
                     <button
                       onClick={handleEnhanceMore}
                       disabled={enhanceLoading || enhanceCount >= 2}
-                      className="flex-1 bg-purple-600 hover:bg-purple-700 disabled:bg-slate-400 text-white font-bold py-2 rounded-lg transition flex items-center justify-center gap-2"
+                      className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-slate-400 text-white font-bold py-2 rounded-lg transition flex items-center justify-center gap-2"
                     >
                       <Zap className="w-5 h-5" />
                       {enhanceLoading ? 'Enhancing...' : 'Enhance More'}
@@ -411,6 +503,27 @@ const ResumeOptimizer: React.FC = () => {
                       Maximum enhancement passes reached (95%+ score achieved)
                     </p>
                   )}
+
+                  <div className="mt-6 border-t pt-6">
+                    <h4 className="font-semibold text-slate-900 mb-3">Custom Enhancement</h4>
+                    <p className="text-sm text-slate-600 mb-3">
+                      Tell Claude what to enhance (e.g., "Add more cloud architecture details", "Highlight leadership experience")
+                    </p>
+                    <textarea
+                      value={customPrompt}
+                      onChange={(e) => setCustomPrompt(e.target.value)}
+                      placeholder="E.g., Add more details about distributed systems, highlight DevOps expertise..."
+                      className="w-full h-20 p-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-600 text-sm"
+                    />
+                    <button
+                      onClick={handleCustomEnhance}
+                      disabled={customEnhanceLoading || !customPrompt.trim()}
+                      className="w-full mt-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white font-bold py-2 rounded-lg transition flex items-center justify-center gap-2"
+                    >
+                      <Zap className="w-5 h-5" />
+                      {customEnhanceLoading ? 'Applying Enhancement...' : 'Apply Custom Enhancement'}
+                    </button>
+                  </div>
                 </div>
 
                 {(analysisResult.recommendations || []).length > 0 && (

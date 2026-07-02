@@ -7,6 +7,11 @@ from jose import jwt
 from datetime import datetime, timedelta
 from typing import Optional
 from app.services.resume_analyzer import analyze_resume, get_ats_score_only, enhance_for_ats
+from fastapi import FastAPI, HTTPException, Form, UploadFile, File
+from docx import Document
+import pypdf
+from io import BytesIO
+from docx import Document
 
 # Load environment variables
 load_dotenv()
@@ -54,6 +59,24 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+def extract_text_from_file(file_content: bytes, filename: str) -> str:
+    """Extract text from .docx, .pdf, or .txt files"""
+    
+    if filename.endswith('.docx'):
+        doc = Document(BytesIO(file_content))
+        text = '\n'.join([para.text for para in doc.paragraphs])
+        return text
+    
+    elif filename.endswith('.pdf'):
+        pdf_reader = pypdf.PdfReader(BytesIO(file_content))
+        text = '\n'.join([page.extract_text() for page in pdf_reader.pages])
+        return text
+    
+    elif filename.endswith('.txt'):
+        return file_content.decode('utf-8')
+    
+    else:
+        raise ValueError("Unsupported file format. Use .docx, .pdf, or .txt")
 
 # Routes
 @app.get("/health")
@@ -148,21 +171,35 @@ async def get_current_user(token: str = None):
     return {"message": "User profile (coming soon)"}
 
 @app.post("/api/v1/resume/analyze")
-async def analyze_resume_endpoint(resume_text: str, job_description: str):
-    """Analyze resume against job description"""
+async def analyze_resume_endpoint(
+    resume_file: UploadFile = File(None),
+    resume_text: str = Form(""),
+    job_description: str = Form(...)
+):
+    """Analyze resume against job description - accepts file or text"""
     
-    if not resume_text or not job_description:
+    # Get resume text from file OR form input
+    if resume_file:
+        file_content = await resume_file.read()
+        resume_input = extract_text_from_file(file_content, resume_file.filename)
+    else:
+        resume_input = resume_text
+    
+    if not resume_input.strip() or not job_description.strip():
         raise HTTPException(status_code=400, detail="Resume and job description required")
     
     try:
-        result = analyze_resume(resume_text, job_description)
+        result = analyze_resume(resume_input, job_description)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/v1/resume/enhance-more")
-async def enhance_more_endpoint(enhanced_resume: str, job_description: str):
+async def enhance_more_endpoint(
+    enhanced_resume: str = Form(...),
+    job_description: str = Form(...)
+):
     """Re-enhance an already enhanced resume to push ATS score even higher"""
     
     if not enhanced_resume or not job_description:
@@ -189,7 +226,45 @@ async def enhance_more_endpoint(enhanced_resume: str, job_description: str):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+ 
+@app.post("/api/v1/resume/enhance-custom")
+async def enhance_custom_endpoint(
+    resume_text: str = Form(...),
+    job_description: str = Form(...),
+    custom_prompt: str = Form(...)
+):
+    """Enhance resume with custom user requirements"""
+    
+    if not resume_text or not job_description or not custom_prompt:
+        raise HTTPException(status_code=400, detail="Resume, job description, and custom prompt required")
+    
+    try:
+        # Get current analysis
+        analysis = get_ats_score_only(resume_text, job_description)
+        
+        # Create enhanced prompt with custom requirements
+        custom_analysis = {
+            **analysis,
+            "custom_requirements": custom_prompt
+        }
+        
+        # Enhance with custom requirements
+        custom_enhanced = enhance_for_ats(resume_text, job_description, custom_analysis)
+        
+        # Score the custom enhanced resume
+        new_analysis = get_ats_score_only(custom_enhanced, job_description)
+        
+        return {
+            "previous_ats_score": analysis.get("ats_score", 0),
+            "new_ats_score": new_analysis.get("ats_score", 0),
+            "improvement": new_analysis.get("ats_score", 0) - analysis.get("ats_score", 0),
+            "custom_enhanced_resume": custom_enhanced,
+            "missing_keywords": new_analysis.get("missing_keywords", []),
+            "strengths": new_analysis.get("strengths", []),
+            "areas_to_improve": new_analysis.get("areas_to_improve", [])
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))  
 
 if __name__ == "__main__":
     import uvicorn
