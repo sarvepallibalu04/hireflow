@@ -4,6 +4,7 @@ import { Landing } from './pages/Landing'
 import { Login } from './pages/Login'
 import { Signup } from './pages/Signup'
 import { Dashboard } from './pages/Dashboard'
+import { ResumeOptimizer } from './pages/ResumeOptimizer';
 
 export const AppRoutes: React.FC = () => {
   return (
@@ -14,6 +15,7 @@ export const AppRoutes: React.FC = () => {
         <Route path="/signup" element={<Signup />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="*" element={<Navigate to="/" replace />} />
+         <Route path="/resume-optimizer" element={<ResumeOptimizer />} />
       </Routes>
     </Router>
   )
